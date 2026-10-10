@@ -107,6 +107,7 @@ fn write_tool_inventory(
     write_json(&paths.metadata.join("tools.json"), &tools)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finalize(
     paths: &CasePaths,
     started: chrono::DateTime<Utc>,
