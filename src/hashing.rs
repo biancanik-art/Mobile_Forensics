@@ -31,7 +31,7 @@ pub fn hash_tree(root: &Path, manifest_path: &Path, exclusions: &[&Path]) -> Res
         .filter(|e| e.file_type().is_file())
         .map(|e| e.into_path())
         .filter(|p| p != manifest_path)
-        .filter(|p| !exclusions.iter().any(|x| *x == p.as_path()))
+        .filter(|p| !exclusions.contains(&p.as_path()))
         .collect();
 
     files.sort();
