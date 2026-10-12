@@ -82,6 +82,7 @@ pub fn safe_ios_tools() -> &'static [&'static str] {
         "idevicecrashreport",
         "idevicesyslog",
         "ideviceprovision",
+        "ideviceinstaller",
         "afcclient",
     ]
 }
