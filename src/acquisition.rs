@@ -450,6 +450,55 @@ pub fn acquire_android(
         }
     }
 
+    if matches!(profile, Profile::Enhanced) {
+        // Best-effort content-provider acquisition. Modern Android versions commonly
+        // restrict these providers for the shell user; failures are preserved as
+        // explicit acquisition records instead of being treated as absent data.
+        let provider_collectors = [
+            (
+                "contacts_provider",
+                vec![
+                    "shell",
+                    "content",
+                    "query",
+                    "--uri",
+                    "content://contacts/phones/",
+                ],
+                "content-contacts.txt",
+            ),
+            (
+                "call_log_provider",
+                vec![
+                    "shell",
+                    "content",
+                    "query",
+                    "--uri",
+                    "content://call_log/calls",
+                ],
+                "content-call-log.txt",
+            ),
+            (
+                "sms_provider",
+                vec!["shell", "content", "query", "--uri", "content://sms/"],
+                "content-sms.txt",
+            ),
+            (
+                "mms_provider",
+                vec!["shell", "content", "query", "--uri", "content://mms/"],
+                "content-mms.txt",
+            ),
+        ];
+
+        for (stage, tail, filename) in provider_collectors {
+            let args = adb_args(&tail);
+            if let Err(err) =
+                capture_to_file(&paths, stage, &adb, &args, &android.join(filename))
+            {
+                warnings.push(format!("{stage}: {err:#}"));
+            }
+        }
+    }
+
     if matches!(profile, Profile::Enhanced)
         && probe.device.root_or_jailbreak_detected == Some(true)
     {
