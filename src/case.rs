@@ -15,6 +15,7 @@ pub struct CasePaths {
     pub metadata: PathBuf,
     pub actions: PathBuf,
     pub errors: PathBuf,
+    pub artifacts: PathBuf,
     pub manifest: PathBuf,
     pub integrity: PathBuf,
 }
@@ -31,6 +32,7 @@ impl CasePaths {
         Ok(Self {
             actions: root.join("actions.jsonl"),
             errors: root.join("errors.jsonl"),
+            artifacts: root.join("artifacts.jsonl"),
             manifest: root.join("hashes.sha256"),
             integrity: root.join("integrity.json"),
             root,

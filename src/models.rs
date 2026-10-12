@@ -97,3 +97,16 @@ pub struct IntegrityRecord {
     pub files_hashed: usize,
     pub generated_utc: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactRecord {
+    pub timestamp_utc: String,
+    pub stage: String,
+    pub method: String,
+    pub source: Option<String>,
+    pub destination: Option<String>,
+    pub status: String,
+    pub size: Option<u64>,
+    pub sha256: Option<String>,
+    pub note: Option<String>,
+}
