@@ -1,5 +1,6 @@
 mod acquisition;
 mod android;
+mod artifacts;
 mod case;
 mod command;
 mod hashing;
@@ -30,6 +31,10 @@ struct Cli {
     /// Explicit path to adb/adb.exe.
     #[arg(long, global = true)]
     adb: Option<PathBuf>,
+
+    /// Explicit path to pymobiledevice3. Can also be set with MOBILE_ACQUIRE_PYMOBILEDEVICE3.
+    #[arg(long, global = true)]
+    pymobiledevice3: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
@@ -132,6 +137,19 @@ fn doctor(resolver: &ToolResolver, platform: PlatformArg) {
                 println!("    version: {version}");
             }
         }
+
+        let pmd3 = resolver.describe_pymobiledevice3();
+        println!("iOS / optional pymobiledevice3:");
+        println!(
+            "  pymobiledevice3: {}",
+            if pmd3.available { "FOUND" } else { "MISSING" }
+        );
+        if let Some(path) = pmd3.path {
+            println!("    path: {path}");
+        }
+        if let Some(version) = pmd3.version {
+            println!("    version: {version}");
+        }
     }
 }
 
@@ -191,7 +209,7 @@ fn probe_ios_all(resolver: &ToolResolver, requested: Option<&str>, json: bool) -
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let resolver = ToolResolver::new(cli.ios_tools_dir, cli.adb);
+    let resolver = ToolResolver::new(cli.ios_tools_dir, cli.adb, cli.pymobiledevice3);
 
     match cli.command {
         Commands::Doctor { platform } => doctor(&resolver, platform),
@@ -204,7 +222,7 @@ fn main() -> Result<()> {
             PlatformArg::Ios => probe_ios_all(&resolver, device.as_deref(), json)?,
             PlatformArg::All => {
                 if json {
-                    bail!("--json with --platform all is intentionally disabled in v0.2.0; probe one platform at a time for machine-readable output")
+                    bail!("--json with --platform all is intentionally disabled; probe one platform at a time for machine-readable output")
                 }
                 println!("=== Android ===");
                 if let Err(err) = probe_android_all(&resolver, device.as_deref(), false) {
