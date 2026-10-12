@@ -87,13 +87,14 @@ pub fn record_tree(
     Ok(count)
 }
 
-pub fn record_failure(
+pub fn record_status(
     paths: &CasePaths,
     stage: &str,
     method: &str,
     source: Option<String>,
     destination: Option<&Path>,
-    note: String,
+    status: &str,
+    note: Option<String>,
 ) -> Result<()> {
     append_jsonl(
         &paths.artifacts,
@@ -103,10 +104,29 @@ pub fn record_failure(
             method: method.to_string(),
             source,
             destination: destination.map(|p| relative(paths, p)),
-            status: "failed".to_string(),
+            status: status.to_string(),
             size: None,
             sha256: None,
-            note: Some(note),
+            note,
         },
+    )
+}
+
+pub fn record_failure(
+    paths: &CasePaths,
+    stage: &str,
+    method: &str,
+    source: Option<String>,
+    destination: Option<&Path>,
+    note: String,
+) -> Result<()> {
+    record_status(
+        paths,
+        stage,
+        method,
+        source,
+        destination,
+        "failed",
+        Some(note),
     )
 }
