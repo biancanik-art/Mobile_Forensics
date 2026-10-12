@@ -251,6 +251,8 @@ pub fn acquire_android(
 
     // Standardized raw collection: each surface is preserved separately even when
     // some of the same information also exists inside bugreport/full dumpsys.
+    // These probes are read-only and intentionally avoid commands that toggle radios,
+    // change settings, reboot the phone, or otherwise modify device state.
     let collectors = [
         ("getprop", vec!["shell", "getprop"], "getprop.txt"),
         (
@@ -263,10 +265,52 @@ pub fn acquire_android(
             vec!["shell", "pm", "list", "packages", "-3", "-f", "-U"],
             "packages-third-party.txt",
         ),
+        ("services", vec!["shell", "dumpsys", "-l"], "dumpsys-services.txt"),
         ("mounts", vec!["shell", "mount"], "mounts.txt"),
-        ("proc_mounts", vec!["shell", "cat", "/proc/mounts"], "proc-mounts.txt"),
+        (
+            "proc_mounts",
+            vec!["shell", "cat", "/proc/mounts"],
+            "proc-mounts.txt",
+        ),
         ("df", vec!["shell", "df", "-h"], "df.txt"),
         ("users", vec!["shell", "dumpsys", "user"], "dumpsys-user.txt"),
+        ("accounts", vec!["shell", "dumpsys", "account"], "dumpsys-account.txt"),
+        ("battery", vec!["shell", "dumpsys", "battery"], "dumpsys-battery.txt"),
+        (
+            "batterystats",
+            vec!["shell", "dumpsys", "batterystats"],
+            "dumpsys-batterystats.txt",
+        ),
+        ("power", vec!["shell", "dumpsys", "power"], "dumpsys-power.txt"),
+        ("location", vec!["shell", "dumpsys", "location"], "dumpsys-location.txt"),
+        ("telecom", vec!["shell", "dumpsys", "telecom"], "dumpsys-telecom.txt"),
+        ("usb", vec!["shell", "dumpsys", "usb"], "dumpsys-usb.txt"),
+        ("dropbox", vec!["shell", "dumpsys", "dropbox"], "dumpsys-dropbox.txt"),
+        ("meminfo", vec!["shell", "dumpsys", "meminfo"], "dumpsys-meminfo.txt"),
+        (
+            "sensorservice",
+            vec!["shell", "dumpsys", "sensorservice"],
+            "dumpsys-sensorservice.txt",
+        ),
+        (
+            "audio_flinger",
+            vec!["shell", "dumpsys", "media.audio_flinger"],
+            "dumpsys-media-audio-flinger.txt",
+        ),
+        ("adb_state", vec!["shell", "dumpsys", "adb"], "dumpsys-adb.txt"),
+        (
+            "fingerprint",
+            vec!["shell", "dumpsys", "fingerprint"],
+            "dumpsys-fingerprint.txt",
+        ),
+        (
+            "lock_settings",
+            vec!["shell", "dumpsys", "lock_settings"],
+            "dumpsys-lock-settings.txt",
+        ),
+        ("package", vec!["shell", "dumpsys", "package"], "dumpsys-package.txt"),
+        ("window", vec!["shell", "dumpsys", "window"], "dumpsys-window.txt"),
+        ("stats", vec!["shell", "dumpsys", "stats"], "dumpsys-stats.txt"),
         (
             "settings_system",
             vec!["shell", "settings", "list", "system"],
