@@ -76,11 +76,23 @@ pub fn inspect_ios(resolver: &ToolResolver, udid: &str) -> Result<ProbeResult> {
     let mut notes = Vec::new();
     notes.push("Probe uses ideviceinfo --simple first to avoid auto-pairing.".into());
     match pairing {
-        Some(true) => notes.push("Existing host pairing validates; no new pairing was created by the tool.".into()),
-        Some(false) => notes.push("Existing pairing did not validate. The tool will not issue idevicepair pair automatically.".into()),
-        None => notes.push("idevicepair is unavailable, so pairing state could not be validated.".into()),
+        Some(true) => notes.push(
+            "Existing host pairing validates; no new pairing was created by the tool.".into(),
+        ),
+        Some(false) => notes.push(
+            "Existing pairing did not validate. The tool will not issue idevicepair pair automatically."
+                .into(),
+        ),
+        None => notes
+            .push("idevicepair is unavailable, so pairing state could not be validated.".into()),
     }
     notes.push("AFU/BFU is not inferred from lockdownd availability alone.".into());
+    if resolver.pymobiledevice3().is_some() {
+        notes.push(
+            "pymobiledevice3 is available as an optional secondary iOS backend; v0.3 records its presence but does not silently switch transports during an acquisition."
+                .into(),
+        );
+    }
 
     let access_state = match pairing {
         Some(true) => "usb_visible_existing_pairing_valid".to_string(),
@@ -110,12 +122,24 @@ pub fn inspect_ios(resolver: &ToolResolver, udid: &str) -> Result<ProbeResult> {
         Capability {
             name: "quick_metadata".into(),
             available: simple.status.success(),
-            reason: if simple.status.success() { "ideviceinfo --simple succeeded" } else { "simple lockdownd query failed" }.into(),
+            reason: if simple.status.success() {
+                "ideviceinfo --simple succeeded"
+            } else {
+                "simple lockdownd query failed"
+            }
+            .into(),
         },
         Capability {
             name: "native_mobilebackup2".into(),
             available: paired && resolver.ios("idevicebackup2").is_some(),
-            reason: if !paired { "Requires existing valid pairing/service access" } else if resolver.ios("idevicebackup2").is_none() { "idevicebackup2 unavailable" } else { "Existing pairing validates and idevicebackup2 is available" }.into(),
+            reason: if !paired {
+                "Requires existing valid pairing/service access"
+            } else if resolver.ios("idevicebackup2").is_none() {
+                "idevicebackup2 unavailable"
+            } else {
+                "Existing pairing validates and idevicebackup2 is available"
+            }
+            .into(),
         },
         Capability {
             name: "crash_reports_copy".into(),
@@ -135,9 +159,22 @@ pub fn inspect_ios(resolver: &ToolResolver, udid: &str) -> Result<ProbeResult> {
         Capability {
             name: "afc_available".into(),
             available: paired && resolver.ios("afcclient").is_some(),
-            reason: "AFC backend detected; recursive acquisition is staged for a later tested transport implementation".into(),
+            reason: "AFC backend detected; recursive acquisition is staged for tested read-only transport automation".into(),
+        },
+        Capability {
+            name: "pymobiledevice3_secondary_backend".into(),
+            available: resolver.pymobiledevice3().is_some(),
+            reason: if resolver.pymobiledevice3().is_some() {
+                "Optional backend detected; retained separately from libimobiledevice so transport changes are explicit and auditable"
+            } else {
+                "Optional pymobiledevice3 executable not found"
+            }
+            .into(),
         },
     ];
 
-    Ok(ProbeResult { device, capabilities: caps })
+    Ok(ProbeResult {
+        device,
+        capabilities: caps,
+    })
 }
