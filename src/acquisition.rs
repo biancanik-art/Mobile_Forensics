@@ -598,6 +598,40 @@ pub fn acquire_ios(
         ) {
             warnings.push(format!("ideviceinfo full: {err:#}"));
         }
+
+        let battery_args = vec![
+            "-u".into(),
+            udid.clone(),
+            "-q".into(),
+            "com.apple.mobile.battery".into(),
+        ];
+        if let Err(err) = capture_to_file(
+            &paths,
+            "ideviceinfo_battery",
+            &info,
+            &battery_args,
+            &ios.join("ideviceinfo-battery.txt"),
+        ) {
+            warnings.push(format!("ideviceinfo battery domain: {err:#}"));
+        }
+
+        if let Some(installer) = resolver.ios("ideviceinstaller") {
+            let app_args = vec![
+                "-u".into(),
+                udid.clone(),
+                "list".into(),
+                "--all".into(),
+            ];
+            if let Err(err) = capture_to_file(
+                &paths,
+                "installed_apps",
+                &installer,
+                &app_args,
+                &ios.join("installed-apps.txt"),
+            ) {
+                warnings.push(format!("installed app inventory: {err:#}"));
+            }
+        }
     } else if matches!(profile, Profile::Logical | Profile::Enhanced) {
         let note = "No existing valid pairing. MobileBackup2/AFC-style logical acquisition was not attempted and the tool did not create a new pairing.";
         warnings.push(note.into());
