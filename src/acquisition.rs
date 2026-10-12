@@ -6,12 +6,21 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 
 use crate::android::{adb_path, inspect_android, select_android_device};
+use crate::artifacts::{record_failure, record_file, record_status, record_tree};
 use crate::case::{log_action, log_error, write_json, CasePaths};
 use crate::command::{format_command, run_capture, run_to_logs};
 use crate::hashing::{hash_tree, sha256_file};
 use crate::ios::{inspect_ios, pairing_valid, select_ios_device};
 use crate::models::{AcquisitionSummary, IntegrityRecord, Platform, Profile};
 use crate::tooling::{safe_ios_tools, ToolResolver};
+
+fn method_name(program: &Path) -> String {
+    program
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or("external_tool")
+        .to_string()
+}
 
 fn capture_to_file(
     paths: &CasePaths,
@@ -23,8 +32,11 @@ fn capture_to_file(
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
+
     let display = format_command(program, args);
+    let method = method_name(program);
     log_action(paths, stage, Some(display.clone()), "started", None)?;
+
     match run_capture(program, args.iter().map(String::as_str)) {
         Ok(output) => {
             let mut file = File::create(destination)?;
@@ -33,6 +45,7 @@ fn capture_to_file(
                 file.write_all(b"\n--- STDERR ---\n")?;
                 file.write_all(&output.stderr)?;
             }
+
             if output.status.success() {
                 log_action(
                     paths,
@@ -40,6 +53,15 @@ fn capture_to_file(
                     Some(display),
                     "completed",
                     Some(format!("wrote {}", destination.display())),
+                )?;
+                record_file(
+                    paths,
+                    stage,
+                    &method,
+                    Some(format!("command://{stage}")),
+                    destination,
+                    "acquired",
+                    None,
                 )?;
                 Ok(())
             } else {
@@ -51,6 +73,14 @@ fn capture_to_file(
                     Some(display),
                     "failed",
                     Some(format!("{err:#}")),
+                )?;
+                record_failure(
+                    paths,
+                    stage,
+                    &method,
+                    Some(format!("command://{stage}")),
+                    Some(destination),
+                    format!("{err:#}"),
                 )?;
                 Err(err)
             }
@@ -64,6 +94,14 @@ fn capture_to_file(
                 "failed",
                 Some(format!("{err:#}")),
             )?;
+            record_failure(
+                paths,
+                stage,
+                &method,
+                Some(format!("command://{stage}")),
+                Some(destination),
+                format!("{err:#}"),
+            )?;
             Err(err)
         }
     }
@@ -74,6 +112,7 @@ fn run_logged(paths: &CasePaths, stage: &str, program: &Path, args: &[String]) -
     let stderr_path = paths.logs.join(format!("{stage}.stderr.log"));
     let display = format_command(program, args);
     log_action(paths, stage, Some(display.clone()), "started", None)?;
+
     let status = run_to_logs(program, args, &stdout_path, &stderr_path)?;
     if status.success() {
         log_action(paths, stage, Some(display), "completed", None)?;
@@ -99,10 +138,14 @@ fn write_tool_inventory(
 ) -> Result<()> {
     let tools = match platform {
         Platform::Android => vec![resolver.describe_adb()],
-        Platform::Ios => safe_ios_tools()
-            .iter()
-            .map(|name| resolver.describe_ios(name))
-            .collect(),
+        Platform::Ios => {
+            let mut tools: Vec<_> = safe_ios_tools()
+                .iter()
+                .map(|name| resolver.describe_ios(name))
+                .collect();
+            tools.push(resolver.describe_pymobiledevice3());
+            tools
+        }
     };
     write_json(&paths.metadata.join("tools.json"), &tools)
 }
@@ -206,30 +249,72 @@ pub fn acquire_android(
         args
     };
 
+    // Standardized raw collection: each surface is preserved separately even when
+    // some of the same information also exists inside bugreport/full dumpsys.
     let collectors = [
         ("getprop", vec!["shell", "getprop"], "getprop.txt"),
         (
             "packages",
-            vec!["shell", "pm", "list", "packages", "-f"],
+            vec!["shell", "pm", "list", "packages", "-f", "-U"],
             "packages.txt",
         ),
-        ("mounts", vec!["shell", "mount"], "mounts.txt"),
-        ("df", vec!["shell", "df", "-h"], "df.txt"),
         (
-            "users",
-            vec!["shell", "dumpsys", "user"],
-            "dumpsys_user.txt",
+            "packages_third_party",
+            vec!["shell", "pm", "list", "packages", "-3", "-f", "-U"],
+            "packages-third-party.txt",
+        ),
+        ("mounts", vec!["shell", "mount"], "mounts.txt"),
+        ("proc_mounts", vec!["shell", "cat", "/proc/mounts"], "proc-mounts.txt"),
+        ("df", vec!["shell", "df", "-h"], "df.txt"),
+        ("users", vec!["shell", "dumpsys", "user"], "dumpsys-user.txt"),
+        (
+            "settings_system",
+            vec!["shell", "settings", "list", "system"],
+            "settings-system.txt",
         ),
         (
             "settings_global",
             vec!["shell", "settings", "list", "global"],
-            "settings_global.txt",
+            "settings-global.txt",
         ),
         (
             "settings_secure",
             vec!["shell", "settings", "list", "secure"],
-            "settings_secure.txt",
+            "settings-secure.txt",
         ),
+        (
+            "activity_recents",
+            vec!["shell", "dumpsys", "activity", "recents"],
+            "dumpsys-activity-recents.txt",
+        ),
+        (
+            "usage_stats",
+            vec!["shell", "dumpsys", "usagestats"],
+            "dumpsys-usagestats.txt",
+        ),
+        (
+            "notification",
+            vec!["shell", "dumpsys", "notification"],
+            "dumpsys-notification.txt",
+        ),
+        (
+            "connectivity",
+            vec!["shell", "dumpsys", "connectivity"],
+            "dumpsys-connectivity.txt",
+        ),
+        (
+            "netstats",
+            vec!["shell", "dumpsys", "netstats"],
+            "dumpsys-netstats.txt",
+        ),
+        ("wifi", vec!["shell", "dumpsys", "wifi"], "dumpsys-wifi.txt"),
+        (
+            "device_policy",
+            vec!["shell", "dumpsys", "device_policy"],
+            "dumpsys-device-policy.txt",
+        ),
+        ("ip_addr", vec!["shell", "ip", "addr"], "ip-addr.txt"),
+        ("ip_route", vec!["shell", "ip", "route"], "ip-route.txt"),
         ("dumpsys", vec!["shell", "dumpsys"], "dumpsys.txt"),
         (
             "logcat",
@@ -240,9 +325,7 @@ pub fn acquire_android(
 
     for (stage, tail, filename) in collectors {
         let args = adb_args(&tail);
-        if let Err(err) =
-            capture_to_file(&paths, stage, &adb, &args, &android.join(filename))
-        {
+        if let Err(err) = capture_to_file(&paths, stage, &adb, &args, &android.join(filename)) {
             warnings.push(format!("{stage}: {err:#}"));
         }
     }
@@ -250,8 +333,41 @@ pub fn acquire_android(
     let bugreport = android.join("bugreport.zip");
     let bugreport_s = bugreport.to_string_lossy().to_string();
     let args = adb_args(&["bugreport", bugreport_s.as_str()]);
-    if let Err(err) = run_logged(&paths, "bugreport", &adb, &args) {
-        warnings.push(format!("bugreport: {err:#}"));
+    match run_logged(&paths, "bugreport", &adb, &args) {
+        Ok(()) => {
+            if bugreport.is_file() {
+                record_file(
+                    &paths,
+                    "bugreport",
+                    "adb",
+                    Some("android://bugreport".into()),
+                    &bugreport,
+                    "acquired",
+                    None,
+                )?;
+            } else {
+                record_status(
+                    &paths,
+                    "bugreport",
+                    "adb",
+                    Some("android://bugreport".into()),
+                    Some(&bugreport),
+                    "completed_no_expected_file",
+                    Some("adb reported success but the expected ZIP path was not present".into()),
+                )?;
+            }
+        }
+        Err(err) => {
+            record_failure(
+                &paths,
+                "bugreport",
+                "adb",
+                Some("android://bugreport".into()),
+                Some(&bugreport),
+                format!("{err:#}"),
+            )?;
+            warnings.push(format!("bugreport: {err:#}"));
+        }
     }
 
     if matches!(profile, Profile::Logical | Profile::Enhanced) {
@@ -259,24 +375,53 @@ pub fn acquire_android(
         fs::create_dir_all(&shared)?;
         let shared_s = shared.to_string_lossy().to_string();
         let args = adb_args(&["pull", "/sdcard/", shared_s.as_str()]);
-        if let Err(err) = run_logged(&paths, "shared_storage_pull", &adb, &args) {
-            warnings.push(format!("shared storage pull: {err:#}"));
+        match run_logged(&paths, "shared_storage_pull", &adb, &args) {
+            Ok(()) => {
+                let count = record_tree(
+                    &paths,
+                    "shared_storage_pull",
+                    "adb pull",
+                    "/sdcard/",
+                    &shared,
+                )?;
+                log_action(
+                    &paths,
+                    "shared_storage_manifest",
+                    None,
+                    "completed",
+                    Some(format!("recorded {count} acquired files")),
+                )?;
+            }
+            Err(err) => {
+                record_failure(
+                    &paths,
+                    "shared_storage_pull",
+                    "adb pull",
+                    Some("/sdcard/".into()),
+                    Some(&shared),
+                    format!("{err:#}"),
+                )?;
+                warnings.push(format!("shared storage pull: {err:#}"));
+            }
         }
     }
 
     if matches!(profile, Profile::Enhanced)
         && probe.device.root_or_jailbreak_detected == Some(true)
     {
-        warnings.push("Existing root was detected, but raw/root filesystem streaming is intentionally not enabled in v0.2.0 yet; no privilege-changing action was performed.".into());
+        warnings.push("Existing root was detected, but raw/root filesystem streaming is intentionally not enabled in v0.3.0 yet; no privilege-changing action was performed.".into());
+        record_status(
+            &paths,
+            "root_filesystem",
+            "adb",
+            Some("android://root-filesystem".into()),
+            None,
+            "not_implemented",
+            Some("Existing root detected; raw/root filesystem streaming is reserved for the dedicated acquisition plugin.".into()),
+        )?;
     }
 
-    log_action(
-        &paths,
-        "acquisition",
-        None,
-        "collection_complete",
-        None,
-    )?;
+    log_action(&paths, "acquisition", None, "collection_complete", None)?;
     finalize(
         &paths,
         started,
@@ -361,7 +506,17 @@ pub fn acquire_ios(
             warnings.push(format!("ideviceinfo full: {err:#}"));
         }
     } else if matches!(profile, Profile::Logical | Profile::Enhanced) {
-        warnings.push("No existing valid pairing. MobileBackup2/AFC-style logical acquisition was not attempted and the tool did not create a new pairing.".into());
+        let note = "No existing valid pairing. MobileBackup2/AFC-style logical acquisition was not attempted and the tool did not create a new pairing.";
+        warnings.push(note.into());
+        record_status(
+            &paths,
+            "mobilebackup2_full",
+            "libimobiledevice",
+            Some("ios://mobilebackup2".into()),
+            None,
+            "not_attempted",
+            Some(note.into()),
+        )?;
     }
 
     if paired
@@ -379,10 +534,27 @@ pub fn acquire_ios(
                 "-k".into(),
                 crash_dir.to_string_lossy().to_string(),
             ];
-            if let Err(err) =
-                run_logged(&paths, "crash_reports_copy", &crash, &args)
-            {
-                warnings.push(format!("crash reports: {err:#}"));
+            match run_logged(&paths, "crash_reports_copy", &crash, &args) {
+                Ok(()) => {
+                    record_tree(
+                        &paths,
+                        "crash_reports_copy",
+                        "idevicecrashreport -k",
+                        "ios://crash-reports/",
+                        &crash_dir,
+                    )?;
+                }
+                Err(err) => {
+                    record_failure(
+                        &paths,
+                        "crash_reports_copy",
+                        "idevicecrashreport -k",
+                        Some("ios://crash-reports/".into()),
+                        Some(&crash_dir),
+                        format!("{err:#}"),
+                    )?;
+                    warnings.push(format!("crash reports: {err:#}"));
+                }
             }
         }
     }
@@ -400,10 +572,35 @@ pub fn acquire_ios(
             "--full".into(),
             backup_dir.to_string_lossy().to_string(),
         ];
-        if let Err(err) =
-            run_logged(&paths, "mobilebackup2_full", &backup, &args)
-        {
-            warnings.push(format!("MobileBackup2 full backup: {err:#}"));
+
+        match run_logged(&paths, "mobilebackup2_full", &backup, &args) {
+            Ok(()) => {
+                let count = record_tree(
+                    &paths,
+                    "mobilebackup2_full",
+                    "idevicebackup2",
+                    "ios://mobilebackup2/",
+                    &backup_dir,
+                )?;
+                log_action(
+                    &paths,
+                    "mobilebackup2_manifest",
+                    None,
+                    "completed",
+                    Some(format!("recorded {count} native backup files")),
+                )?;
+            }
+            Err(err) => {
+                record_failure(
+                    &paths,
+                    "mobilebackup2_full",
+                    "idevicebackup2",
+                    Some("ios://mobilebackup2/".into()),
+                    Some(&backup_dir),
+                    format!("{err:#}"),
+                )?;
+                warnings.push(format!("MobileBackup2 full backup: {err:#}"));
+            }
         }
     }
 
@@ -416,10 +613,41 @@ pub fn acquire_ios(
                 "archive".into(),
                 archive.to_string_lossy().to_string(),
             ];
-            if let Err(err) =
-                run_logged(&paths, "unified_log_archive", &syslog, &args)
-            {
-                warnings.push(format!("unified log archive: {err:#}"));
+
+            match run_logged(&paths, "unified_log_archive", &syslog, &args) {
+                Ok(()) if archive.is_file() => {
+                    record_file(
+                        &paths,
+                        "unified_log_archive",
+                        "idevicesyslog archive",
+                        Some("ios://unified-logs".into()),
+                        &archive,
+                        "acquired",
+                        None,
+                    )?;
+                }
+                Ok(()) => {
+                    record_status(
+                        &paths,
+                        "unified_log_archive",
+                        "idevicesyslog archive",
+                        Some("ios://unified-logs".into()),
+                        Some(&archive),
+                        "completed_no_expected_file",
+                        Some("tool returned success but expected archive path is absent".into()),
+                    )?;
+                }
+                Err(err) => {
+                    record_failure(
+                        &paths,
+                        "unified_log_archive",
+                        "idevicesyslog archive",
+                        Some("ios://unified-logs".into()),
+                        Some(&archive),
+                        format!("{err:#}"),
+                    )?;
+                    warnings.push(format!("unified log archive: {err:#}"));
+                }
             }
         }
 
@@ -436,31 +664,53 @@ pub fn acquire_ios(
             ) {
                 warnings.push(format!("provisioning list: {err:#}"));
             }
+
             let copy_args = vec![
                 "-u".into(),
                 udid.clone(),
                 "copy".into(),
                 provision_dir.to_string_lossy().to_string(),
             ];
-            if let Err(err) =
-                run_logged(&paths, "provisioning_copy", &provision, &copy_args)
-            {
-                warnings.push(format!("provisioning copy: {err:#}"));
+            match run_logged(&paths, "provisioning_copy", &provision, &copy_args) {
+                Ok(()) => {
+                    record_tree(
+                        &paths,
+                        "provisioning_copy",
+                        "ideviceprovision copy",
+                        "ios://provisioning-profiles/",
+                        &provision_dir,
+                    )?;
+                }
+                Err(err) => {
+                    record_failure(
+                        &paths,
+                        "provisioning_copy",
+                        "ideviceprovision copy",
+                        Some("ios://provisioning-profiles/".into()),
+                        Some(&provision_dir),
+                        format!("{err:#}"),
+                    )?;
+                    warnings.push(format!("provisioning copy: {err:#}"));
+                }
             }
         }
 
         if resolver.ios("afcclient").is_some() {
-            warnings.push("AFC service/tool is available, but recursive AFC export is not enabled in v0.2.0 until its non-interactive transport is validated on real devices. No write-capable AFC command is used.".into());
+            let note = "AFC backend is detected, but recursive AFC/HouseArrest export is not automatically enabled until the exact read-only command transport is validated on real devices.";
+            warnings.push(note.into());
+            record_status(
+                &paths,
+                "afc_recursive_export",
+                "afcclient",
+                Some("ios://afc".into()),
+                None,
+                "not_implemented",
+                Some(note.into()),
+            )?;
         }
     }
 
-    log_action(
-        &paths,
-        "acquisition",
-        None,
-        "collection_complete",
-        None,
-    )?;
+    log_action(&paths, "acquisition", None, "collection_complete", None)?;
     finalize(
         &paths,
         started,
